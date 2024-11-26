@@ -44,18 +44,18 @@ type Packages map[string][]string
 
 // PatchConfig represents the structure of the configuration file
 type Config struct {
-	build_dir     string     `json:"BuildDir"`
-	patch_dir     string     `json:"PatchDir"`
-	overlay_dir   string     `json:"OverlayDir"`
-	local_repo    string     `json:"LocalRepoDir"`
-	name          string     `json:"Name"`
-	packages      []Packages `json:"Packages"`
-	overlays      []string   `json:"Overlays"`
-	patches       []Patches  `json:"Patches"`
-	packagegroups string     `json:"PackageGroups"`
-	pacconfig     string     `json:"Pacconfig"`
-	mirrorlist    string     `json:"Mirrorlist"`
-	snapshot      string     `json:"Snapshot"`
+	Build_dir     string     `json:"build_dir"`
+	Patch_dir     string     `json:"patch_dir"`
+	Overlay_dir   string     `json:"overlay_dir"`
+	Local_repo    string     `json:"local_repo"`
+	Name          string     `json:"name"`
+	Packages      []Packages `json:"packages"`
+	Overlays      []string   `json:"overlays"`
+	Patches       []Patches  `json:"patches"`
+	Packagegroups string     `json:"packagegroups"`
+	Pacconfig     string     `json:"pacconfig"`
+	Mirrorlist    string     `json:"mirrorlist"`
+	Snapshot      string     `json:"snapshot"`
 }
 
 // read current package version from repository
@@ -88,7 +88,7 @@ func get_current_version_from_repo(package_name string) string {
 
 // takes the config struct and the name of the package and returns the version-revision of the package
 func get_version_from_overlay(config Config, packagename string) string {
-	url := filepath.Join(config.overlay_dir, packagename, "PKGBUILD")
+	url := filepath.Join(config.Overlay_dir, packagename, "PKGBUILD")
 	// read file to string
 	contents_bytes, err := os.ReadFile(url)
 
@@ -190,7 +190,7 @@ func extract_tgz(filename, output_path string) error {
 		switch header.Typeflag {
 		case tar.TypeDir:
 			// Create directory
-			if err := os.MkdirAll(target, os.FileMode(header.Mode)); err != nil {
+			if err := os.MkdirAll(target, os.FileMode(0777)); err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)
 			}
 		case tar.TypeReg:
@@ -206,6 +206,7 @@ func extract_tgz(filename, output_path string) error {
 			f.Close()
 		}
 	}
+	fmt.Println("Successfully extracted " + filename)
 	return nil
 }
 
@@ -251,6 +252,9 @@ func modify_pkgbuild(file string, patch string, package_name string) {
 	err = os.WriteFile(file, []byte(modified_content), 0644)
 	if err != nil {
 		fmt.Printf("Couldn't write PKGBUILD-file: %s\n", file)
+	} else {
+		fmt.Println("Successfully applied patch " + patch)
+
 	}
 }
 
@@ -259,9 +263,10 @@ func modify_pkgbuild(file string, patch string, package_name string) {
 // Then the function modifies the PKGBUILD file.
 func applyPatches(config Config, patches []string, packagename string, packageversion string) {
 	for _, patch := range patches {
-		pkg_build_dir := filepath.Join(config.build_dir, fmt.Sprintf("%s-%s", packagename, packageversion))
+		fmt.Println("Applying patch " + patch)
+		pkg_build_dir := filepath.Join(config.Build_dir, "src", fmt.Sprintf("%s-%s", packagename, packageversion))
 		copyFile(
-			filepath.Join(config.patch_dir, packagename, patch),
+			filepath.Join(config.Patch_dir, packagename, patch),
 			filepath.Join(pkg_build_dir, patch),
 		)
 		modify_pkgbuild(filepath.Join(pkg_build_dir, "PKGBUILD"), patch, packagename)
@@ -269,6 +274,7 @@ func applyPatches(config Config, patches []string, packagename string, packageve
 }
 
 func buildPackage(pkg_build_dir string) {
+	fmt.Println("Building package in: ", pkg_build_dir)
 	commands := "pushd " + pkg_build_dir +
 		"; updpkgsums" +
 		"; makepkg -cCsr --skippgpcheck" +
@@ -279,7 +285,7 @@ func buildPackage(pkg_build_dir string) {
 // takes config struct and packagename and updates the repository so that a build package is
 // copied to the local repository directory and added to the directory
 func update_repository(config Config, local_repo_dir string, packagename string) {
-	files, _ := filepath.Glob(filepath.Join(config.build_dir, "src", packagename, "**", "*.pkg.tar.zst"))
+	files, _ := filepath.Glob(filepath.Join(config.Build_dir, "src", packagename, "**", "*.pkg.tar.zst"))
 
 	for _, entry_result := range files {
 		copyFile(
@@ -298,7 +304,7 @@ func update_repository(config Config, local_repo_dir string, packagename string)
 
 // cleans the build directory
 func cleanup(config Config) {
-	command := fmt.Sprintf("rm -r %s/src", config.build_dir)
+	command := fmt.Sprintf("rm -r %s/src", config.Build_dir)
 	execCmd(command)
 }
 
@@ -313,7 +319,7 @@ func get_installed_version(packagename string) string {
 	cmd.Stdout = &out
 	err := cmd.Run()
 	if err != nil {
-		fmt.Println("Error while reading package version of %s: %e", packagename, err)
+		fmt.Println("Error while reading package version of ", packagename, err)
 	}
 
 	// Save the output to a variable
@@ -321,7 +327,7 @@ func get_installed_version(packagename string) string {
 	if len(output) > 0 {
 		return output
 	} else {
-		fmt.Println("No version found for package %s", packagename)
+		fmt.Println("No version found for package ", packagename)
 		return ""
 	}
 }
@@ -332,18 +338,20 @@ func get_installed_version(packagename string) string {
 // be mindfull of special characters in the pattern, e.g.
 // $$      Match single dollar sign.
 
-func modifyFile(filename string, pattern string, replacement string, append_if_not_exist bool) {
+func modify_file(filename string, pattern string, replacement string, append_if_not_exist bool) {
 
 	contents_bytes, err := os.ReadFile(filename)
-	file_content := string(contents_bytes)
+
 	if err != nil {
-		fmt.Println("Error opening file %s: %e", filename, err)
+		fmt.Println("Error opening file ", filename, err)
 		return
 	}
 
+	file_content := string(contents_bytes)
+
 	re, _ := regexp.Compile(pattern)
 	pattern_found, _ := regexp.MatchString(pattern, file_content)
-
+	
 	if pattern_found {
 		// replace the pattern
 		file_content = re.ReplaceAllString(file_content, replacement)
@@ -357,7 +365,7 @@ func modifyFile(filename string, pattern string, replacement string, append_if_n
 	// Write the modified lines back to the file
 	file, err := os.Create(filename)
 	if err != nil {
-		fmt.Println("Error opening file %s for writing: %e", filename, err)
+		fmt.Println("Error opening file  ", filename, " for writing: ", err)
 		return
 	}
 	defer file.Close()
@@ -392,43 +400,44 @@ func parse_config(file_path string, args Args) Config {
 
 	// use pacconfig from args if available
 	if args.pacconfig != "none" {
-		configs.pacconfig = args.pacconfig
+		configs.Pacconfig = args.pacconfig
 	}
 
-	configs.pacconfig = resolve_home(configs.pacconfig)
+	configs.Pacconfig = resolve_home(configs.Pacconfig)
 
 	// if overlay-dir starts with ~ or $HOME, parse the directory
-	configs.overlay_dir = resolve_home(configs.overlay_dir)
+	configs.Overlay_dir = resolve_home(configs.Overlay_dir)
 
 	// if patch-dir starts with ~ or $HOME, parse the directory
-	configs.patch_dir = resolve_home(configs.patch_dir)
+	configs.Patch_dir = resolve_home(configs.Patch_dir)
 
 	// if overlay-dir starts with ~ or $HOME, parse the directory
-	configs.mirrorlist = resolve_home(configs.mirrorlist)
+	configs.Mirrorlist = resolve_home(configs.Mirrorlist)
 
-	if strings.HasSuffix(strings.TrimRight(configs.local_repo, " "), ".db.tar.zst") {
-		configs.local_repo = resolve_home(configs.local_repo)
+	if strings.HasSuffix(strings.TrimRight(configs.Local_repo, " "), ".db.tar.zst") {
+		configs.Local_repo = resolve_home(configs.Local_repo)
 		// does the file exist?
-		_, err = os.Stat(configs.local_repo)
+		_, err = os.Stat(configs.Local_repo)
 		if err != nil {
 			//initiate, if anything other the no or n is defined
 			if args.initiate != "no" && args.initiate != "n" {
 				fmt.Println("Repository file doesn't exist. It will be created.")
 				initiate_repo(configs)
-				configs.local_repo = filepath.Base(configs.local_repo)
+				configs.Local_repo = filepath.Base(configs.Local_repo)
 
 			} else {
-				configs.local_repo = "none"
+				configs.Local_repo = "none"
 				fmt.Println(Red + "No db.tar.zst-file for local repository specified -> no local builds are possible. To create the file, restart with -i yes" + Reset)
 			}
 		} else {
 			// repo file exists --> get path to repo
-			configs.local_repo = filepath.Base(configs.local_repo)
+			configs.Local_repo = filepath.Base(configs.Local_repo)
 		}
 	} else {
-		configs.local_repo = "none"
+		configs.Local_repo = "none"
 		fmt.Println(Red + "No db.tar.zst-file for local repository specified -> no local builds are possible" + Reset)
 	}
+
 	return configs
 }
 
@@ -448,7 +457,7 @@ func resolve_home(path string) string {
 // Takes config struct
 // Creates local repo according to the defined local_repo config option
 func initiate_repo(config Config) {
-	local_repo_file := filepath.Base(config.local_repo)
+	local_repo_file := filepath.Base(config.Local_repo)
 	execCmd("repo-add " + local_repo_file)
 }
 
@@ -457,13 +466,13 @@ func initiate_repo(config Config) {
 // Updates pacman.conf with configured mirrorlist and adds local repo
 func initiate_pacmanconf(config Config) {
 	// change mirrorlist to the one configured
-	modifyFile(config.pacconfig, "Include.*mirrorlist", "Include = "+config.mirrorlist, false)
+	modify_file(config.Pacconfig, "Include.*mirrorlist", "Include = "+config.Mirrorlist, false)
 
 	// add local repository
-	if config.local_repo != "none" {
-		contents_bytes, err := os.ReadFile(config.pacconfig)
+	if config.Local_repo != "none" {
+		contents_bytes, err := os.ReadFile(config.Pacconfig)
 		if err != nil {
-			fmt.Println("Couldn't read pacconfig %s: %e", config.pacconfig, err)
+			fmt.Println("Couldn't read pacconfig %s: %e", config.Pacconfig, err)
 		}
 		file_contents := string(contents_bytes)
 		var modified_content string
@@ -478,7 +487,7 @@ func initiate_pacmanconf(config Config) {
 				modified_content +=
 					"[nomispaz]\n" +
 						"Siglevel = Optional TrustAll\n" +
-						"Server = file://%s" + config.local_repo + "\n\n" +
+						"Server = file://%s" + config.Local_repo + "\n\n" +
 						line + "\n"
 
 				already_inserted = true
@@ -486,9 +495,9 @@ func initiate_pacmanconf(config Config) {
 				modified_content += line + "\n"
 			}
 		}
-		err = os.WriteFile(config.pacconfig, []byte(modified_content), 0644)
+		err = os.WriteFile(config.Pacconfig, []byte(modified_content), 0644)
 		if err != nil {
-			fmt.Printf("Couldn't write pacconfig-file %s: %e\n", config.pacconfig, err)
+			fmt.Printf("Couldn't write pacconfig-file %s: %e\n", config.Pacconfig, err)
 		}
 	}
 }
@@ -533,21 +542,37 @@ func execCmd(command string) {
 }
 
 func parse_args() Args {
-	var args Args
 
-	args.snapshot = *flag.String("snapshot", "none", "Defines the date of the Arch-repository snapshot that should be used. Always enter in the format YYYY_MM_DD. If no date is entered, no update will be performed.")
+	snapshot := flag.String("snapshot", "none", "Defines the date of the Arch-repository snapshot that should be used. Always enter in the format YYYY_MM_DD. If no date is entered, no update will be performed.")
 
-	args.pacconfig = *flag.String("pacconfig", "none", "Provides the pacconfig-file")
+	pacconfig := flag.String("pacconfig", "none", "Provides the pacconfig-file")
 
-	args.config = *flag.String("config", "~/.config/nompac_rs/configs/config.json", "Config file for nompac")
+	config := flag.String("config", "~/.config/nompac/configs/config.json", "Config file for nompac")
 
-	args.package_groups = *flag.String("packagegroups", "none", "Define package groups that should be used seperated by a comma ','")
+	package_groups := flag.String("packagegroups", "none", "Define package groups that should be used seperated by a comma ','")
 
-	args.initiate = *flag.String("initiate", "no", "Set to yes if the pacconfig file and the local repository file should be generated in this run.")
+	initiate := flag.String("initiate", "no", "Set to yes if the pacconfig file and the local repository file should be generated in this run.")
 
 	flag.Parse()
+	
+	args := Args{
+		snapshot: *snapshot,
+		pacconfig: *pacconfig,
+		config: *config,
+		package_groups: *package_groups,
+		initiate: *initiate,
+	}
 
 	return args
+}
+
+func contains(slice []string, str string) bool {
+	for _, item := range slice {
+		if item == str {
+			return true
+		}
+	}
+	return false
 }
 
 func collect_package_lists(configs Config, args Args) ([]string, []string) {
@@ -569,14 +594,14 @@ func collect_package_lists(configs Config, args Args) ([]string, []string) {
 	if args.package_groups != "none" {
 		package_groups = strings.Split(args.package_groups, ",")
 	} else {
-		package_groups = strings.Split(configs.packagegroups, ",")
+		package_groups = strings.Split(configs.Packagegroups, ",")
 	}
 
 	// create package list of packages that should be installed explicitely
 	// slice to include all packages to be installed explicitely
 	var package_list []string
 
-	for group, packagelist := range configs.packages[0] {
+	for group, packagelist := range configs.Packages[0] {
 		if strings.Contains(package_groups[0], group) || strings.Contains(package_groups[0], "all") {
 			for _, pkg := range packagelist {
 				package_list = append(package_list, strings.ToLower(pkg))
@@ -591,30 +616,23 @@ func collect_package_lists(configs Config, args Args) ([]string, []string) {
 	// for this, iterate over list and remove the package already read from the vector
 	var packages_to_remove []string
 	for _, pkg := range package_list_installed {
-		for entry := range package_list {
-			if !strings.Contains(package_list[entry], pkg) {
-				packages_to_remove = append(packages_to_remove, pkg)
-			}
-
+		if !contains(package_list, pkg) {
+			packages_to_remove = append(packages_to_remove, pkg)
 		}
 	}
 
 	// search for packages that are in the config file but not explicitely installed
 	var packages_to_install []string
 	for _, pkg := range package_list {
-		for entry := range package_list_installed {
-			if !strings.Contains(package_list_installed[entry], pkg) {
-				packages_to_install = append(packages_to_install, pkg)
-			}
-
+		if !contains(package_list_installed, pkg) {
+			packages_to_install = append(packages_to_install, pkg)
 		}
+
 	}
 
 	return packages_to_remove, packages_to_install
 }
 
-// TODO: rewrite.
-// switch some tasks to readConfig
 func main() {
 	// define and read command line arguments
 	args := parse_args()
@@ -630,129 +648,122 @@ func main() {
 	var date []string
 
 	// if a snapshot was defined in the arguments, replace the one from the config file
-	if args.snapshot == "none" {
-		date = strings.Split(configs.snapshot, "_")
-	} else {
+	if args.snapshot != "none" {
 		date = strings.Split(args.snapshot, "_")
+	} else {
+		date = strings.Split(configs.Snapshot, "_")
 	}
 
 	fmt.Println(Blue + "Used settings:" + Reset)
-	fmt.Println("Local build directory: " + configs.build_dir)
-	fmt.Println("Local repository: " + configs.local_repo)
-	fmt.Println("Patch directory: " + configs.patch_dir)
-	fmt.Println("Overlay directory: " + configs.overlay_dir)
-	fmt.Println("pacman.conf location: " + configs.pacconfig)
+	fmt.Println("Local build directory: " + configs.Build_dir)
+	fmt.Println("Local repository: " + configs.Local_repo)
+	fmt.Println("Patch directory: " + configs.Patch_dir)
+	fmt.Println("Overlay directory: " + configs.Overlay_dir)
+	fmt.Println("pacman.conf location: " + configs.Pacconfig)
 
-	os.MkdirAll(configs.build_dir, os.ModeDir)
+	os.MkdirAll(configs.Build_dir, os.FileMode(0777))
 
 	packages_to_remove, packages_to_install := collect_package_lists(configs, args)
 
-	fmt.Println(Blue + "Building patched upstream-packages" + Reset)
-
 	//building custom packages and overlays
-	if configs.local_repo != "none" {
+	if configs.Local_repo != "none" {
 		fmt.Println(Blue + "\nBuilding patched upstream-packages" + Reset)
 
 		// create necessary directories
 		// build directory
-		os.MkdirAll(filepath.Join(configs.build_dir, "src"), os.ModeDir)
+		os.MkdirAll(filepath.Join(configs.Build_dir, "src"), os.FileMode(0777))
 
 		// apply patches, build new package and update local repository
-		for _, package_list := range configs.patches[0] {
-			for _, pkg := range package_list {
-				package_version_repo := get_current_version_from_repo(pkg)
-				package_version_installed := get_installed_version(pkg)
-				//only procede if the package was updated upstream
-				if strings.Trim(package_version_installed, " ") != strings.Trim(package_version_repo, " ") {
-					get_current_tarball_from_repo(pkg, package_version_repo, fmt.Sprintf("%s/%s-%s.tar.gz", configs.build_dir, pkg, package_version_repo))
-
-					fmt.Println("%s/%s-%s.tar.gz", configs.build_dir, pkg, package_version_repo)
-
-					extract_tgz(fmt.Sprintf("%s/%s-%s.tar.gz", configs.build_dir, pkg, package_version_repo), filepath.Join(configs.build_dir, "src"))
-
-					applyPatches(configs, configs.patches[0][pkg], pkg, package_version_repo)
-
-					buildPackage(fmt.Sprintf("%s/src/%s-%s/", configs.build_dir, pkg, package_version_repo))
-
-					update_repository(configs, configs.local_repo, pkg)
-				} else {
-					fmt.Println(Green+"Package %s already up to date."+Reset, pkg)
-				}
-			}
-		}
-		fmt.Println(Blue + "\nBuilding packages from overlays" + Reset)
-		for _, pkg := range configs.overlays {
-			package_version_overlay := get_version_from_overlay(configs, pkg)
+		for pkg, patches := range configs.Patches[0] {
+			package_version_repo := get_current_version_from_repo(pkg)
 			package_version_installed := get_installed_version(pkg)
 
-			if strings.Trim(package_version_installed, " ") != strings.Trim(package_version_overlay, " ") {
-				// copy necessary files from overlay to build directory
-		//TODO continue from here
+			//only procede if the package was updated upstream
+			if strings.TrimSpace(package_version_installed) != strings.TrimSpace(package_version_repo) {
+				get_current_tarball_from_repo(pkg, package_version_repo, fmt.Sprintf("%s/%s-%s.tar.gz", configs.Build_dir, pkg, package_version_repo))
 
+				fmt.Printf("%s/%s-%s.tar.gz\n", configs.Build_dir, pkg, package_version_repo)
+
+				extract_tgz(fmt.Sprintf("%s/%s-%s.tar.gz", configs.Build_dir, pkg, package_version_repo), filepath.Join(configs.Build_dir, "src"))
+
+				applyPatches(configs, patches, pkg, package_version_repo)
+
+				buildPackage(fmt.Sprintf("%s/src/%s-%s/", configs.Build_dir, pkg, package_version_repo))
+
+				update_repository(configs, configs.Local_repo, pkg)
+			} else {
+				fmt.Println(Green + fmt.Sprintf("Package %s already up to date."+Reset, pkg))
 			}
 		}
 	}
+	fmt.Println(Blue + "\nBuilding packages from overlays" + Reset)
+	for _, pkg := range configs.Overlays {
+		package_version_overlay := get_version_from_overlay(configs, pkg)
+		package_version_installed := get_installed_version(pkg)
 
+		if strings.TrimSpace(package_version_installed) != strings.TrimSpace(package_version_overlay) {
+			// copy necessary files from overlay to build directory
+			filepath.WalkDir(filepath.Join(configs.Overlay_dir, pkg), func(path string, entry os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				// if entry is a file,continue
+				if !entry.IsDir() {
+					// create directory if it is missing
+					os.MkdirAll(filepath.Join(configs.Build_dir, "src", pkg), os.FileMode(0777))
+					copyFile(path, filepath.Join(configs.Build_dir, "src", pkg, entry.Name()))
+				}
+				fmt.Println(configs.Build_dir + "/src" + pkg)
+				return nil
+			})
 
-
-
-
-
-
-	// ab hier alter Code
-
-	fmt.Println(Blue + "Building packages from overlays" + Reset)
-	for _, packageName := range config.overlays {
-		// read package version from local package overlay
-		packageVersion := get_version_from_overlay(config, packageName)
-		fileName := packageName + "-" + packageVersion
-		// read version of installed package
-		installedPkgVersion := get_installed_version(packageName)
-		// only build package if the package version in the PKGBUILD is different thatn the installed version.
-		if strings.Compare(strings.Trim(installedPkgVersion, "\n"), strings.Trim(packageVersion, "\n")) != 0 {
-			err := os.CopyFS(config.build_dir+"/src/"+fileName, os.DirFS(filepath.Join(config.overlay_dir, packageName)))
-
-			if err != nil {
-				panic(err)
-			}
-
-			buildPackage(config, fileName)
-			updateRepository(config, packageName, fileName)
-			cleanup(config)
+			// build the package
+			buildPackage(filepath.Join(configs.Build_dir, "src", pkg))
+			update_repository(configs, configs.Local_repo, pkg)
+			cleanup(configs)
 		} else {
-			fmt.Println("No new version of package " + packageName + " available --> no rebuild")
+			fmt.Println(Green + "Package " + pkg + " already up to date" + Reset)
 		}
-
 	}
 
-	if *update != "no" {
-		fmt.Println(Blue + "Updating mirrorlist and system" + Reset)
+	// perform system update
+	if date[0] != "none" {
+		// update snapshot that will be used for the update
+		modify_file(configs.Mirrorlist, ".*archive.archlinux.org.*", fmt.Sprintf("Server = https://archive.archlinux.org/repos/%s/%s/%s/$$repo/os/$$arch", date[0], date[1], date[2]), true)
 
-		modifyFile("/home/simonheise/git_repos/nompac/configs/mirrorlist", "archive.archlinux.org", "Server = https://archive.archlinux.org/repos/"+snapshot_year+"/"+snapshot_month+"/"+snapshot_day+"/$repo/os/$arch")
+		// only perform if packages have to be removed
+		if len(packages_to_remove) > 0 {
+			fmt.Println(Red + "Removing the following packages since they don't exist in the config file:" + Reset)
+			var package_list string
+			for _, pkg := range packages_to_remove {
+				package_list += " " + pkg
+			}
+			// TODO: change to async
+			fmt.Println(package_list)
+			execCmd("sudo pacman -Rsc " + package_list)
 
-		fmt.Println(Blue + "Rebuilding the system." + Reset)
-		fmt.Print(Red + "Removing the following packages: " + Reset)
-		command := "sudo pacman -Rsn"
-		printDelete := ""
-		for i := range packagesToDelete {
-			command += " " + packagesToDelete[i]
-			printDelete += packagesToDelete[i]
 		}
-		fmt.Println(printDelete)
-		execCmd(command)
 
-		printInstall := ""
-		fmt.Print(Red + "Installing the following packages and updating system: " + Reset)
-		command = "sudo pacman -Syu"
-		for i := range packagesToInstall {
-			command += " " + packagesToInstall[i]
-			printInstall += packagesToInstall[i]
+		// only perform if packages have to be installed
+		if len(packages_to_install) > 0 {
+			fmt.Println(Blue + "Installing the following packages and starting update:" + Reset)
+			var package_list string
+			for _, pkg := range packages_to_install {
+				package_list += " " + pkg
+			}
+			//TODO: change to async
+			fmt.Println(package_list)
+			execCmd("sudo pacman -Syu --config " + configs.Pacconfig + " " + package_list)
+
+			// after running the update, check for changed config files
+			//TODO: run sudo DIFFPROG='nvim -d' pacdiff interactively
+		} else {
+			fmt.Println(Blue + "Starting system update.\n" + Reset)
+			//TODO: change to async
+			execCmd("sudo pacman -Syu --config " + configs.Pacconfig)
+			// after running the update, check for changed config files
+			//TODO: run sudo DIFFPROG='nvim -d' pacdiff interactively
+
 		}
-		command += " --config " + *pacconfig +
-			"; sudo DIFFPROG='nvim -d' pacdiff"
-		fmt.Println(printInstall)
-		execCmd(command)
-
 	}
-
 }
